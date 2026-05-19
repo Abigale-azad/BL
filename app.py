@@ -21,12 +21,11 @@ from utils import (
     compute_statistics,
     portfolio_stats,
     risk_contributions,
-    backtest_portfolio,
     plot_rolling_vol,
     plot_corr_matrix,
     plot_weight_comparison,
     plot_risk_contribution,
-    plot_nav_curves,
+    # 注意：已删除 plot_nav_curves 和 backtest_portfolio 的导入，因为它们不再使用
 )
 
 # ─── 页面配置 ────────────────────────────────────────────────────────────────
@@ -169,7 +168,7 @@ with st.sidebar:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MAIN AREA — 7 个步骤标签页
+# MAIN AREA — 6 个步骤标签页（已删除历史回测）
 # ═══════════════════════════════════════════════════════════════════════════════
 st.markdown('<div class="main-title">Black-Litterman 大类资产配置系统</div>',
             unsafe_allow_html=True)
@@ -178,8 +177,8 @@ if st.session_state.prices is None:
     st.info('👈 请先在侧栏上传 Excel 文件或勾选"使用示例数据"')
     st.stop()
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "①数据统计", "②BL参数", "③观点设置", "④约束条件", "⑤BL计算", "⑥结果对比", "⑦历史回测"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "①数据统计", "②BL参数", "③观点设置", "④约束条件", "⑤BL计算", "⑥结果对比"
 ])
 
 # 快捷引用
@@ -615,8 +614,8 @@ with tab5:
                     "w_bl": w_bl, "w_mkt": st.session_state.get("w_mkt", np.ones(n_assets)/n_assets),
                     "w_eq": w_eq, "cov": cov, "success": success,
                 }
-                st.success("✅ BL 计算完成！请查看「⑥结果对比」和「⑦历史回测」标签页")
-                st.rerun()  # 强制刷新页面，使 Tab6/Tab7 立即显示最新结果
+                st.success("✅ BL 计算完成！请查看「⑥结果对比」标签页")
+                st.rerun()  # 强制刷新页面，使 Tab6 立即显示最新结果
 
             except Exception as e:
                 st.error(f"计算出错：{e}")
@@ -729,84 +728,3 @@ with tab6:
             "等权基准": rc_eq / rc_eq.sum() if rc_eq.sum() > 0 else rc_eq,
         }, index=assets).map(lambda x: f"{x:.2%}")
         st.dataframe(rc_df, use_container_width=True)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 7 — 历史回测
-# ═══════════════════════════════════════════════════════════════════════════════
-with tab7:
-    st.subheader("📈 组合历史回测")
-
-    res = st.session_state.get("bl_result")
-    if res is None:
-        st.info("请先在「⑤BL计算」标签页执行计算")
-        st.stop()
-
-    bt_col1, bt_col2 = st.columns([3, 1])
-    with bt_col1:
-        bt_window = st.selectbox(
-            "回测区间",
-            ["全部历史", "最近1年", "最近3年", "最近5年"],
-            index=0,
-        )
-    with bt_col2:
-        show_single = st.checkbox("叠加单资产净值", value=False)
-
-    ret_bt = returns.copy()
-    if bt_window == "最近1年":
-        ret_bt = ret_bt.iloc[-252:]
-    elif bt_window == "最近3年":
-        ret_bt = ret_bt.iloc[-756:]
-    elif bt_window == "最近5年":
-        ret_bt = ret_bt.iloc[-1260:]
-
-    nav_dict = {
-        "BL 最优": backtest_portfolio(ret_bt, res["w_bl"]),
-        "市场初始权重": backtest_portfolio(ret_bt, res["w_mkt"]),
-        "等权基准": backtest_portfolio(ret_bt, res["w_eq"]),
-    }
-    if show_single:
-        for col in assets:
-            single_ret = ret_bt[[col]]
-            single_nav = (1 + single_ret[col]).cumprod()
-            single_nav = single_nav / single_nav.iloc[0]
-            single_nav.name = col
-            nav_dict[col] = single_nav
-
-    st.plotly_chart(plot_nav_curves(nav_dict), use_container_width=True)
-
-    # 回测统计
-    st.markdown("#### 回测统计")
-    bt_stats_rows = []
-    for label, nav in nav_dict.items():
-        total_ret = float(nav.iloc[-1] - 1)
-        days = len(nav)
-        ann_ret = float((1 + total_ret) ** (252 / days) - 1) if days > 0 else 0
-        daily_ret = nav.pct_change().dropna()
-        ann_vol_bt = float(daily_ret.std() * np.sqrt(252))
-        sharpe_bt = (ann_ret - rf) / ann_vol_bt if ann_vol_bt > 1e-10 else 0
-        # 最大回撤
-        roll_max = nav.cummax()
-        dd = (nav - roll_max) / roll_max
-        max_dd = float(dd.min())
-        bt_stats_rows.append({
-            "组合": label,
-            "累计收益": f"{total_ret:.2%}",
-            "年化收益": f"{ann_ret:.2%}",
-            "年化波动率": f"{ann_vol_bt:.2%}",
-            "夏普比率": f"{sharpe_bt:.3f}",
-            "最大回撤": f"{max_dd:.2%}",
-        })
-    bt_df = pd.DataFrame(bt_stats_rows).set_index("组合")
-    st.dataframe(bt_df, use_container_width=True)
-
-    # 导出回测净值
-    nav_export = pd.DataFrame({k: v for k, v in nav_dict.items()})
-    out2 = io.BytesIO()
-    nav_export.to_excel(out2)
-    st.download_button(
-        "⬇️ 导出回测净值 Excel",
-        out2.getvalue(),
-        file_name="bl_backtest_nav.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
